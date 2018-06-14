@@ -1,20 +1,57 @@
+/* This code defines a terminal-based,
+ * wolfenstein-inspired raycasting renderer
+ * of 2-dimensional maps. Given a hardcoded
+ * string representing the map data, it visually
+ * renders the walls (represented as '#') and
+ * allows the player to move using the WASD keys
+ * It is implemented using ncurses and tested on
+ * GNU/Linux.
+ *
+ * Created by Jake Sippy 2018
+ */
+
 #include <ncurses.h>
-#include <unistd.h>
-#include <string.h>
 #include <math.h>
 #include <time.h>
 #include <stdlib.h>
 
-#define MAX_DEPTH 20
+// show debug info?
+#define DEBUG true
 
+// how far the player can see
+#define MAX_DEPTH 25
+
+// colors
+#define BLACK 0
+#define WHITE 1
+
+// color pairs
+#define TEXT 0
+#define BLACK_ON_BLACK 1
+
+// num of different shades
+#define SHADES 20
+
+// starting number for wall colors
+#define WALL_SHADE_START 10
+
+#define FLOOR_SHADE_START (WALL_SHADE_START + SHADES)
+
+// characters to draw with
+#define WALL_CHAR ' '
+#define FLOOR_CHAR ' '
+
+// players position and angle
 float playerX = 8;
 float playerY = 8;
 float playerA = 0.0f;
 
+// players field of view
 float playerFOV = M_PI / 4.0f;
 
-int mapWidth = 20;
-int mapHeight = 20;
+// hardcoded map
+const int mapWidth = 20;
+const int mapHeight = 20;
 const char *map = "####################"
                   "#..................#"
                   "#..................#"
@@ -36,9 +73,11 @@ const char *map = "####################"
                   "#..........#.......#"
                   "####################";
 
+// helper method
+bool handleUserInput();
 
 int main() {
-  // initialize ncurses settings
+  /* ncurses settings */
   initscr();                  // init main window
   cbreak();                   // dont buffer input
   noecho();                   // dont echo input
@@ -49,61 +88,57 @@ int main() {
   curs_set(0);                // hide cursor
 
 
-  // colors
+  /* color definitions */
   start_color();
 
-  for (int i = 1; i <= 8; i++) {
-    short shade = 400 + i * 50;
+  // defining white on black pair for text
+  init_color(BLACK, 0, 0, 0);     // default black
+  init_color(WHITE, 0, 0, 0);     // default white
+  init_pair(TEXT, WHITE, BLACK);  // pair for white on black text
+
+  // defining the darkening shades for the walls
+  for (int i = WALL_SHADE_START; i < SHADES + WALL_SHADE_START; i++) {
+    short shade = ((short) (800.0f / SHADES)) * (i - WALL_SHADE_START);
     init_color(i, shade, shade, shade);
     init_pair(i, i, i);
   }
 
-  // default colors
-  init_color(0, 0, 0, 0);            // black
-  init_pair(0, 8, 0);
-
-  if (!can_change_color()) {
-    return 2;
+  // defining the darkening shades for the floor
+  for (int i = FLOOR_SHADE_START; i < SHADES + FLOOR_SHADE_START; i++) {
+    short shade = ((short) (600.0f / SHADES)) * (i - FLOOR_SHADE_START);
+    init_color(i, 0, shade, 0);
+    init_pair(i, i, i);
   }
 
-  // start the game loop
+  // define useful black on black color pair
+  init_pair(BLACK_ON_BLACK, BLACK, BLACK);
+
+  // check that we can actually use color
+  if (!can_change_color()) {
+    printf("This terminal does not support color");
+    endwin();
+    return 1;
+  }
+
+  /* game loop */
+  struct timespec start, end;
+  int fps = 0;
   while (1) {
-    // current height and width vars
+    // getting fps
+    clock_gettime(CLOCK_REALTIME, &start);
+
+    // current height and width of the terminal screen
     int h, w;
     getmaxyx(stdscr, h, w);
 
-    // handle user input
-    int ch = getch();
-    float newX = playerX;
-    float newY = playerY;
-    switch (ch) {
-      case 'w':
-        newX = playerX + cos(playerA);
-        newY = playerY + sin(playerA);
-        break;
-      case 's':
-        newX = playerX - cos(playerA);
-        newY = playerY - sin(playerA);
-        break;
-      case 'a':
-        playerA -= M_PI / 32.0;
-        break;
-      case 'd':
-        playerA += M_PI / 32.0;
-        break;
-      case 'q':
-        endwin();
-        return 0;
+    /* user input */
+    if (handleUserInput()) {
+      // user quit the program
+      break;
     }
 
-    // collision detect
-    if (map[(int) newY * mapWidth + (int) newX] != '#') {
-      playerX = newX;
-      playerY = newY;
-    }
-
+    /* Raycasting */
     erase();
-    // RAYCASTING
     for (int col = 0; col < w; col++) {
       // get the current angle of the ray to cast
       float rayAngle = (playerA - playerFOV / 2) +
@@ -115,6 +150,7 @@ int main() {
       // calculate distance to a wall
       float distanceToWall = 0;
       bool hit = false;
+
       while (!hit && distanceToWall < MAX_DEPTH) {
         distanceToWall += 0.1f;
 
@@ -122,71 +158,121 @@ int main() {
         int testY = (int) (playerY + unitY * distanceToWall);
         if (testX < 0 || testX >= mapWidth ||
             testY < 0 || testY > mapHeight) {
+          // the ray extends past the map boundaries
           hit = true;
           distanceToWall = MAX_DEPTH;
         } else if (map[testY * mapWidth + testX] == '#') {
+          // the ray has just hit a block
           hit = true;
         }
       }
 
+      // caclulate how high to draw the wall
       int ceiling = (h / 2.0) - (h / distanceToWall);
       if (ceiling < 0) ceiling = 0;
-
       int floor = h - ceiling;
 
-      // determite which color pair to draw wall with
-      short pair;
-      if      (distanceToWall <= MAX_DEPTH / 8.0) pair = 8;
-      else if (distanceToWall <  MAX_DEPTH / 7.0) pair = 7;
-      else if (distanceToWall <  MAX_DEPTH / 6.0) pair = 6;
-      else if (distanceToWall <  MAX_DEPTH / 5.0) pair = 5;
-      else if (distanceToWall <  MAX_DEPTH / 4.0) pair = 4;
-      else if (distanceToWall <  MAX_DEPTH / 3.0) pair = 3;
-      else if (distanceToWall <  MAX_DEPTH / 2.0) pair = 2;
-      else if (distanceToWall <  MAX_DEPTH / 1.0) pair = 1;
-      else                                        pair = 0;
+      // determine which color pair to draw wall with
+      short pair = BLACK_ON_BLACK;
+      for (int i = WALL_SHADE_START + SHADES - 1; i >= WALL_SHADE_START; i--) {
+        if (distanceToWall < ((float)MAX_DEPTH / (i - WALL_SHADE_START))) {
+          pair = i;
+          break;
+        }
+      }
 
+      // draw the wall
       attron(COLOR_PAIR(pair));
       move(ceiling, col);
-      vline(' ', floor - ceiling);
+      vline(WALL_CHAR, floor - ceiling);
       attroff(COLOR_PAIR(pair));
 
-      // draw the floor
-      attron(COLOR_PAIR(0));
+      // draw the floor one character at a time
+      attron(TEXT);
       for (int i = floor; i < h; i++) {
-        float b = 1.0f - (i - h / 2.0f) / (h / 2.0f);
+        float b = (i - h / 2.0f) / (h / 2.0f);
+        pair = (b * (SHADES - 1)) + FLOOR_SHADE_START;
+        attron(COLOR_PAIR(pair));
         move(i, col);
-        if      (b < 0.25) addch('#');
-        else if (b < 0.5)  addch('x');
-        else if (b < 0.75) addch('!');
-        else if (b < 0.9)  addch('-');
-        else               addch(' ');
+        addch(FLOOR_CHAR);
+        attroff(COLOR_PAIR(pair));
       }
-      attroff(COLOR_PAIR(0));
     }
 
-    attron(COLOR_PAIR(0));
-    // print map
+    // print map and character
+    attron(COLOR_PAIR(TEXT));
     for (int row = 0; row < mapHeight; row++) {
-      move(1 + row, 0);
+      move(row, w - mapWidth);
       printw("%.*s", mapWidth, map + (row * mapWidth));
     }
 
-    // print character
-    move(1 + (int) playerY, (int) playerX);
+    move((int) playerY, (int) playerX + w - mapWidth);
     addch('@');
 
-    // print debug info
-    move(0, 0);
-    clrtoeol();
-    printw("Angle: %.3f X: %f Y: %f Fps: %d Cols: %d, Rows: %d",
-           playerA, playerX, playerY, -1, h, w);
-    attroff(COLOR_PAIR(0));
+    if (DEBUG) {
+      // print debug info
+      move(h - 1, 0);
+      clrtoeol();
+      printw("Angle: %.3f X: %f Y: %f FOV: %f Fps: %d Cols: %d, Rows: %d",
+             playerA, playerX, playerY, playerFOV, fps, h, w);
+      attroff(COLOR_PAIR(TEXT));
+    }
 
     refresh();
+
+    clock_gettime(CLOCK_REALTIME, &end);
+    fps = 1000000000.0f / (end.tv_nsec - start.tv_nsec);
   }
 
   // cleanup
   endwin();
   return 0;
+}
+
+// updates globals based on user input, returns
+// whether the user hit the quit button
+bool handleUserInput() {
+  int ch = getch();
+  float newX = playerX;
+  float newY = playerY;
+  switch (ch) {
+    case 'w':
+      newX = playerX + cos(playerA);
+      newY = playerY + sin(playerA);
+      break;
+    case 'a':
+      newX = playerX + sin(playerA);
+      newY = playerY - cos(playerA);
+      break;
+    case 's':
+      newX = playerX - cos(playerA);
+      newY = playerY - sin(playerA);
+      break;
+    case 'd':
+      newX = playerX - sin(playerA);
+      newY = playerY + cos(playerA);
+      break;
+    case KEY_LEFT:
+      playerA -= M_PI / 32.0;
+      break;
+    case KEY_RIGHT:
+      playerA += M_PI / 32.0;
+      break;
+    case '+':
+      playerFOV += M_PI / 32.0;
+      break;
+    case '-':
+      playerFOV -= M_PI / 32.0;
+      break;
+    case 'q':
+      return true;
+  }
+
+  /* collision detection */
+  if (map[(int) newY * mapWidth + (int) newX] != '#') {
+    playerX = newX;
+    playerY = newY;
+  }
+
+  return false;
 }
