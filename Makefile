@@ -1,10 +1,10 @@
 all: app
 
-app.o: app.c
-	gcc -c app.c
+doom_text.o: doom_text.c
+	gcc -c doom_text.c
 
-app: app.o
-	gcc app.o -o app -lncurses -lm
+app: doom_text.o
+	gcc doom_text.o -o app -lncurses -lm
 
 clean:
 	rm -f app *.o
