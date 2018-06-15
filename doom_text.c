@@ -1,9 +1,10 @@
 /* This code defines a terminal-based,
  * wolfenstein-inspired raycasting renderer
- * of 2-dimensional maps. Given a hardcoded
- * string representing the map data, it visually
- * renders the walls (represented as '#') and
- * allows the player to move using the WASD keys
+ * of 2-dimensional maps. This program allows the
+ * player to move using the WASD keys for cardinal
+ * movement, the LEFT and RIGHT arrows to rotate
+ * and the + and - keys to increase and decrease
+ * the player's field of vision respectively.
  * It is implemented using ncurses and tested on
  * GNU/Linux.
  *
@@ -20,6 +21,12 @@
 
 // how far the player can see
 #define MAX_DEPTH 25
+
+// generated map dimensions
+#define MIN_WIDTH 20
+#define MAX_WIDTH 30
+#define MIN_HEIGHT 20
+#define MAX_HEIGHT 30
 
 // colors
 #define BLACK 0
@@ -44,37 +51,20 @@
 // players position and angle
 float playerX = 8;
 float playerY = 8;
-float playerA = 0.0f;
+float playerA = M_PI / 2.0f;
 
 // players field of view
 float playerFOV = M_PI / 4.0f;
 
-// hardcoded map
-const int mapWidth = 20;
-const int mapHeight = 20;
-const char *map = "####################"
-                  "#..................#"
-                  "#..................#"
-                  "#..................#"
-                  "###############....#"
-                  "#..................#"
-                  "#..................#"
-                  "#..................#"
-                  "#..................#"
-                  "#..................#"
-                  "#..................#"
-                  "#..................#"
-                  "#..................#"
-                  "#..................#"
-                  "#..........#########"
-                  "#..........#.......#"
-                  "#..................#"
-                  "#..........#.......#"
-                  "#..........#.......#"
-                  "####################";
+// current map data
+int mapWidth;
+int mapHeight;
+char *map;
 
-// helper method
-bool handleUserInput();
+// helper methods
+bool handleUserInput(void);
+void generateNewMap(int width, int height);
+void carveMaze(int x, int y, int width, int height);
 
 int main() {
   /* ncurses settings */
@@ -86,6 +76,7 @@ int main() {
   intrflush(stdscr, FALSE);   // dont flush output on interupt
   keypad(stdscr, TRUE);       // enable terminal keypad
   curs_set(0);                // hide cursor
+  srand(time(NULL));          // set random seed
 
 
   /* color definitions */
@@ -117,10 +108,20 @@ int main() {
   if (!can_change_color()) {
     printf("This terminal does not support color");
     endwin();
+    free(map);
     return 1;
   }
 
   /* game loop */
+  mapWidth  = 23;
+  mapHeight = mapWidth;
+  generateNewMap(mapWidth, mapHeight);
+
+
+  for (int row = 0; row < mapHeight; row++) {
+    fprintf(stderr, "row%2d: %.*s\n", row, mapWidth, map);
+  }
+
   struct timespec start, end;
   int fps = 0;
   while (1) {
@@ -156,12 +157,13 @@ int main() {
 
         int testX = (int) (playerX + unitX * distanceToWall);
         int testY = (int) (playerY + unitY * distanceToWall);
-        if (testX < 0 || testX >= mapWidth ||
-            testY < 0 || testY > mapHeight) {
-          // the ray extends past the map boundaries
-          hit = true;
-          distanceToWall = MAX_DEPTH;
-        } else if (map[testY * mapWidth + testX] == '#') {
+        /* if (testX < 0 || testX >= mapWidth || */
+        /*     testY < 0 || testY > mapHeight) { */
+        /*   // the ray extends past the map boundaries */
+        /*   hit = true; */
+        /*   distanceToWall = MAX_DEPTH; */
+        /* } else  */
+        if (map[testY * mapWidth + testX] == '#') {
           // the ray has just hit a block
           hit = true;
         }
@@ -201,20 +203,26 @@ int main() {
 
     // print map and character
     attron(COLOR_PAIR(TEXT));
+    int mapstartX = w - 1 - (2 * mapWidth);
     for (int row = 0; row < mapHeight; row++) {
-      move(row, w - mapWidth);
-      printw("%.*s", mapWidth, map + (row * mapWidth));
+      for (int col = 0; col < mapWidth; col++) {
+        move(row, mapstartX + 2 * col);
+        if (map[col + mapWidth * row] == '#')
+          printw("[]");
+        else
+          printw("  ");
+      }
     }
 
-    move((int) playerY, (int) playerX + w - mapWidth);
-    addch('@');
+    move((int) playerY, mapstartX + 2 * (int) playerX);
+    printw("><");
 
     if (DEBUG) {
       // print debug info
       move(h - 1, 0);
       clrtoeol();
       printw("Angle: %.3f X: %f Y: %f FOV: %f Fps: %d Cols: %d, Rows: %d",
-             playerA, playerX, playerY, playerFOV, fps, h, w);
+             playerA, playerX, playerY, playerFOV, fps, w, h);
       attroff(COLOR_PAIR(TEXT));
     }
 
@@ -222,35 +230,36 @@ int main() {
 
     clock_gettime(CLOCK_REALTIME, &end);
     fps = 1000000000.0f / (end.tv_nsec - start.tv_nsec);
-  }
+  } // end of game loop
 
   // cleanup
   endwin();
+  free(map);
   return 0;
 }
 
 // updates globals based on user input, returns
 // whether the user hit the quit button
-bool handleUserInput() {
+bool handleUserInput(void) {
   int ch = getch();
   float newX = playerX;
   float newY = playerY;
   switch (ch) {
     case 'w':
-      newX = playerX + cos(playerA);
-      newY = playerY + sin(playerA);
+      newX = playerX + 0.5 * cos(playerA);
+      newY = playerY + 0.5 * sin(playerA);
       break;
     case 'a':
-      newX = playerX + sin(playerA);
-      newY = playerY - cos(playerA);
+      newX = playerX + 0.5 * sin(playerA);
+      newY = playerY - 0.5 * cos(playerA);
       break;
     case 's':
-      newX = playerX - cos(playerA);
-      newY = playerY - sin(playerA);
+      newX = playerX - 0.5 * cos(playerA);
+      newY = playerY - 0.5 * sin(playerA);
       break;
     case 'd':
-      newX = playerX - sin(playerA);
-      newY = playerY + cos(playerA);
+      newX = playerX - 0.5 * sin(playerA);
+      newY = playerY + 0.5 * cos(playerA);
       break;
     case KEY_LEFT:
       playerA -= M_PI / 32.0;
@@ -275,4 +284,77 @@ bool handleUserInput() {
   }
 
   return false;
+}
+
+// used to generate a new map
+void generateNewMap(int width, int height) {
+  // free the old map, and allocate a new map with
+  // the right size
+  map = malloc(width * height * sizeof(char));
+  if (map == NULL) {
+    fprintf(stderr, "[ERROR] Out of memory");
+  }
+
+  int x, y;
+
+  /* Initialize the new map to be all walls */
+  for (x = 0; x < width * height; x++) {
+    map[x] = '#';
+  }
+
+  /* Manually start the first tunnel */
+  map[1 + width * 1] = ' ';
+  map[1 + width * 2] = ' ';
+
+  /* Carve the maze */
+  for (y = 1; y < height; y += 2) {
+    for (x = 1; x < width; x += 2) {
+      carveMaze(x, y, width, height);
+    }
+  }
+
+  /* Set up entrance and exit */
+  map[1 + width * 0] = ' ';
+  map[(width - 2) + width * (height - 1)] = ' ';
+
+  // set player at the start
+  playerX = 1.5f;
+  playerY = 0.5f;
+}
+
+void carveMaze(int x, int y, int width, int height) {
+  int x1, y1;
+  int x2, y2;
+  int dx, dy;
+  int dir, count;
+
+  dir = rand() % 4;
+  count = 0;
+  while (count < 4) {
+    dx = 0; dy = 0;
+    switch (dir) {
+      case 0:  dx =  1; break;
+      case 1:  dy =  1; break;
+      case 2:  dx = -1; break;
+      default: dy = -1; break;
+    }
+
+    x1 = x + dx;
+    y1 = y + dy;
+    x2 = x1 + dx;
+    y2 = y1 + dy;
+
+    if (x2 > 0 && x2 < width && y2 > 0 && y2 < height &&
+        map[x1 + width * y1] == '#' && map[x2 + width * y2] == '#') {
+
+      map[x1 + width * y1] = ' ';
+      map[x2 + width * y2] = ' ';
+      x = x2; y = y2;
+      dir = rand() % 4;
+      count = 0;
+    } else {
+      dir = (dir + 1) % 4;
+      count += 1;
+    }
+  }
 }
